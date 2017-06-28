@@ -9,7 +9,12 @@ import (
 	"github.com/spf13/viper"
 )
 
-var cfgFile string
+var (
+	build       string
+	cfgFile     string
+	downloadDir string
+	patchDir    string
+)
 
 // RootCmd represents the base command when called without any subcommands
 var RootCmd = &cobra.Command{
@@ -24,13 +29,23 @@ to quickly create a Cobra application.`,
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	Run: func(cmd *cobra.Command, args []string) {
-		stable, unstable, err := grb.GetVersions()
+		err := checkConfig()
 		if err != nil {
-			fmt.Printf("error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+			os.Exit(1)
 		}
 
-		fmt.Printf("Stable: %#v\n", stable)
-		fmt.Printf("Unstable: %#v\n", unstable)
+		buildVersion, err := grb.GetVersion(build)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %s\n", err)
+			os.Exit(1)
+		}
+
+		err = grb.GetTarball(buildVersion.URL, downloadDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %s\n", err)
+			os.Exit(1)
+		}
 	},
 }
 
@@ -38,7 +53,7 @@ to quickly create a Cobra application.`,
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	if err := RootCmd.Execute(); err != nil {
-		fmt.Println(err)
+		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(-1)
 	}
 }
@@ -46,14 +61,11 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	// Here you will define your flags and configuration settings.
-	// Cobra supports Persistent Flags, which, if defined here,
-	// will be global for your application.
-
 	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.grb.yaml)")
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
-	RootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	RootCmd.PersistentFlags().StringP("build", "b", "", "version of go to build")
+	RootCmd.PersistentFlags().StringP("download", "d", "", "download directory for tarballs")
+	RootCmd.PersistentFlags().StringP("patch", "p", "", "patch directory")
+	viper.BindPFlags(RootCmd.PersistentFlags())
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -65,9 +77,20 @@ func initConfig() {
 	viper.SetConfigName(".grb")  // name of config file (without extension)
 	viper.AddConfigPath("$HOME") // adding home directory as first search path
 	viper.AutomaticEnv()         // read in environment variables that match
+	viper.ReadInConfig()
+}
 
-	// If a config file is found, read it in.
-	if err := viper.ReadInConfig(); err == nil {
-		fmt.Println("Using config file:", viper.ConfigFileUsed())
+func checkConfig() error {
+	build = viper.GetString("build")
+	downloadDir = viper.GetString("download")
+	patchDir = viper.GetString("patch")
+
+	if downloadDir == "" {
+		return fmt.Errorf("error: download directory not set")
 	}
+	if patchDir == "" {
+		return fmt.Errorf("error: patch directory not set")
+	}
+
+	return nil
 }

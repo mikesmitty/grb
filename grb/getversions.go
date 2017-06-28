@@ -3,6 +3,7 @@ package grb
 import (
 	"fmt"
 	"net/http"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,26 +21,63 @@ type GoVersion struct {
 	URL     string
 }
 
-func GetVersions() (stable GoVersion, unstable GoVersion, err error) {
+func GetVersion(version string) (GoVersion, error) {
 	// Get all versions from the download page
 	versions, err := getAllVersions()
 	if err != nil {
-		return
+		return GoVersion{}, err
 	}
 
-	// Find the latest stable and unstable versions
+	// Default to the latest stable version unless otherwise specified
+	if version == "" {
+		version = "stable"
+	}
+
+	var (
+		stable   GoVersion
+		unstable GoVersion
+	)
+	if version == "stable" || version == "unstable" {
+		// Find the latest stable and unstable versions
+		for _, v := range versions {
+			stbl := isStable(v)
+			if stbl && compare(v, stable) {
+				stable = v
+				continue
+			}
+			if !stbl && compare(v, unstable) {
+				unstable = v
+			}
+		}
+	}
+
+	if version == "stable" {
+		return stable, nil
+	} else if version == "unstable" {
+		return unstable, nil
+	}
+
+	// Get the version in a format we recognize
+	r := regexp.MustCompile(`(go)?(\d\.\d+((\.|rc|beta)\d+)?)`)
+	matches := r.FindAllStringSubmatch(version, -1)
+	if len(matches) < 1 {
+		return GoVersion{}, fmt.Errorf("invalid go version")
+	}
+	versionName := matches[0][2]
+
+	// Find the version needle in the version haystack
 	for _, v := range versions {
-		stbl := isStable(v)
-		if stbl && compare(v, stable) {
-			stable = v
-			continue
+		rel := v.Release
+		if rel == "" {
+			rel = "."
 		}
-		if !stbl && compare(v, unstable) {
-			unstable = v
+		vn := fmt.Sprintf("%d.%d%s%d", v.Major, v.Minor, rel, v.Patch)
+		if vn == versionName {
+			return v, nil
 		}
 	}
 
-	return
+	return GoVersion{}, fmt.Errorf("go version not found")
 }
 
 func getAllVersions() ([]GoVersion, error) {
@@ -72,7 +110,17 @@ OUT:
 					if a.Key == "href" {
 						// If this is a src.tar.gz file, parse it and save a struct
 						if vers, ok := parseVersion(a.Val); ok {
-							versions = append(versions, vers)
+							// Check for dupes
+							found := false
+							for _, v := range versions {
+								if reflect.DeepEqual(v, vers) {
+									found = true
+									break
+								}
+							}
+							if !found {
+								versions = append(versions, vers)
+							}
 						}
 						break
 					}
@@ -89,7 +137,7 @@ func parseVersion(url string) (vers GoVersion, ok bool) {
 		return GoVersion{}, false
 	}
 
-	r := regexp.MustCompile(`go(\d)\.(\d)((\.|rc|beta)(\d))?`)
+	r := regexp.MustCompile(`go(\d)\.(\d+)((\.|rc|beta)(\d+))?`)
 	matches := r.FindAllStringSubmatch(url, -1)
 
 	for _, match := range matches {
